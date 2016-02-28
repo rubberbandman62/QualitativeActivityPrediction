@@ -1,0 +1,133 @@
+---
+title: "Qualitative Activity Prediction"
+author: "Hartwig Tödter"
+date: "Saturday, February 27, 2016"
+output: html_document
+---
+
+## Synopsis
+
+In this report the Weight Lifting Exercise Dataset from the Human Activity 
+Recognition program (HAR) is used to predict the quality of an acitivity. After
+some data cleaning I am analysing the data to select a suitable prediction model
+using cross validation. At the end the model is used the predict 20 independent 
+test cases.
+
+## Loading and cleaning data
+
+I loaded the data from the URLs given in the assignment instructions of the course
+Practical Machine Learning on coursera.org to my working directory. While reading 
+the data all missing values are converted to NA.
+
+```{r}
+training_raw <- read.csv("pml-training.csv", header=TRUE, 
+                         na.strings=c("NA", "DIV/0!", ""))
+testing_raw <- read.csv("pml-testing.csv", header=TRUE, 
+                        na.strings=c("NA", "DIV/0!", ""))
+```
+
+```{r}
+nasPerCol <- apply(is.na(training_raw), 2, sum)
+naCols_train <- which(nasPerCol>0) # columns which contain NA's
+```
+
+```{r,echo=FALSE,results='hide'}
+length(naCols_train)
+sumNAsCol <- apply(is.na(training_raw[,naCols_train]), 2, sum)
+range(sumNAsCol)
+
+nasPerRow <- apply(is.na(training_raw), 1, sum)
+naRows_train <- which(nasPerRow>0) # rows which contain NA's
+length(naRows_train)
+sd(apply(is.na(training_raw[naRows_train,]), 1, sum))
+
+nasPerCol <- apply(is.na(testing_raw), 2, sum)
+naCols_test <- which(nasPerCol>0) # columns which contain NA's
+
+sum(naCols_train != naCols_test)
+```
+Examination of the NA values shows that there are `r length(naCols_train)` columns, each
+containing `r max(sumNAsCol)` NA values in exactly the same rows. In the test 
+dataset all the values in these columns are NA. Because there are just 
+`r sum(complete.cases(training_raw))` complete rows of all `r nrow(training_raw)`  
+rows in the training dataset, I decide to discard all the columns containing 
+NA values. There is also some meta data in the columns 1 to 7 which are not
+concerned with the outcome. I also discard these columns
+
+```{r}
+training <- training_raw[,-c(1:7,naCols_train)]
+```
+
+As a final step of data cleaning I remove the highly correlated columns from the training data.
+
+```{r}
+library(caret)
+descCorr <- cor(training[,-53])
+highCorr <- findCorrelation(descCorr, 0.90)
+training <- training[,-highCorr]
+```
+
+## Setting up the data
+
+In order to estmate the out of sample error I randomly pick 25% of the 
+observations to my test data. 75% of the data is used for actual training.
+
+```{r}
+library(caret)
+set.seed(1234)
+inTrain <- createDataPartition(training$classe, p=0.75, list=FALSE)
+training.train <- training[inTrain,]
+training.out <- training[-inTrain,]
+```
+
+## Fitting a random forest model
+
+A random forest using cross validation as a prediction model seems to me appropriate.
+Let's see how it performs.
+
+```{r}
+ctrl <- trainControl(method="cv", number=5, allowParallel=TRUE)
+rfmodel <- train(classe~., data=training.train, method="rf", prox=TRUE, trControl=ctrl)
+rfmodel
+rfmodel$finalModel
+rfmodel$results
+```
+
+The runtime on my laptop is quite poor. It took about 45 minutes to compute the model.
+But the result seems to good at a first glance. The accuracy on the training data
+is `r round(max(rfmodel$results$Accuracy),3)*100`%.
+
+## Cross Validation
+
+```{r}
+prd <- predict(rfmodel, training.out)
+tab <- table(prd, training.out$classe)
+acc <- sum(diag(tab))/sum(tab)
+acc
+```
+
+My model fits the out of training sample quite well. The accuracy is even a little bit 
+better: `r round(acc,4)*100`%
+
+If this accuracy had been less than 90% I would have tried other models. E.g. 
+boosted trees. 
+
+Alternatively we came use the confusionMatrix of the caret package, which prdocuces
+some more information.
+
+```{r}
+cfMatrix <- confusionMatrix(prd, training.out$classe)
+cfMatrix
+```
+
+Using the accuracy I calculcate the out of sample estimate to be: `r round(1-acc,4)*100`%
+
+## Predict another 20 test cases
+
+Using my prediction model I can now predict the outcome on the additional test cases
+from the assignment:
+
+```{r}
+predict.test <- predict(rfmodel, testing_raw)
+predict.test
+```
